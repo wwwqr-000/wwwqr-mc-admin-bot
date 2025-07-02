@@ -1,59 +1,132 @@
-import discord, time, subprocess
+import discord, time, subprocess, textwrap#pip install discord
+from discord import app_commands
 from discord.ext import commands
-from mcrcon import MCRcon
+from mcrcon import MCRcon#pip install mcrcon
+from mcstatus.server import JavaServer# pip install mcstatus
+from decouple import config #pip install python-decouple
+
+rconHost = config("RCON_HOST")
+mcHostPublicIP = config("MC_HOST_PUBLIC")
+rconPort = config("RCON_PORT", cast=int)
+mcPort = config("MC_PORT", cast=int)
+rconPassword = config("RCON_PASSWORD")
+tunnelService = config("TUNNEL_SERVICE")
+mcServerService = config("MC_SERVER_SERVICE")
+mcServerWorldFolder = config("MC_SERVER_WORLD_FOLDER")
+localDiscordTestingServerID = config("DISCORD_DEVELOPER_SERVER_ID", cast=int)
+discordBotToken = config("DISCORD_BOT_TOKEN")
+
+guildID = discord.Object(id=localDiscordTestingServerID)
+intents = discord.Intents.default()
+intents.guilds = True
+intents.messages = True
+intents.message_content = True
 
 def bash(cmd):
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     return result.stdout or result.stderr
 
-host = "127.0.0.1"
-port = 25575
-password = "RCON_PASSWORD"
+def rcon(cmd):
+    with MCRcon(rconHost, rconPassword, rconPort) as mcr:
+        return mcr.command(cmd)
+    
+def getServerInfo():
+    try:
+        server = JavaServer(mcHostPublicIP, mcPort)
+        stat = server.status()
+        return stat
+    
+    except Exception as e: 
+        return False
+    
+def serverIsOnline():
+    if (not getServerInfo()): return False
+    return True
+    
 
-intents = discord.Intents.default()
-intents.guilds = True
-intents.messages = True
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+class Bot(commands.Bot):
+    async def on_ready(self):
+        try:
+            synced = await self.tree.sync(guild=guildID)
+            print(f"Synced {len(synced)} commands seen development server")
+        
+        except Exception as e:
+            print(f"Error syncing: {e}")
+            
+        print(f"Bot is user '{self.user}'")
+        
+    async def on_message(self, message):
+        if (message.author == self.user): return
+        if (message.content.startswith("hello")):
+            await message.channel.send(f"Hi there, {message.author}")
+            
+    async def on_reaction_add(self, reaction, user):
+        await reaction.message.channel.send(f"You reacted")
 
-@bot.event
-async def on_ready():
-    print(f"Bot connected as {bot.user}")
-    for guild in bot.guilds:
-        for channel in guild.text_channels:
-            if (channel.permissions_for(guild.me).send_messages):
-                await channel.send("Bot online!")
-                break
+bot = Bot(command_prefix="!", intents=intents)
+    
+@bot.tree.command(name="refresh-tunnel", description="Refresh the tunnel", guild=guildID)
+async def refreshTunnel(interaction: discord.Interaction):
+    bash(f"sudo systemctl restart {tunnelService}")
+    await interaction.response.send_message("Refreshing tunnel...")
+    
+@bot.tree.command(name="start-server", description="Start the minecraft server", guild=guildID)
+async def startServer(interaction: discord.Interaction):
+    if (serverIsOnline()):
+        await interaction.response.send_message("Server already started.")
+        return
+        
+    bash(f"sudo systemctl start {mcServerService}")
+    await interaction.response.send_message("Starting server...")
+    
+@bot.tree.command(name="stop-server", description="Stop the minecraft server", guild=guildID)
+async def stopServer(interaction: discord.Interaction):
+    if (not serverIsOnline()):
+        await interaction.response.send_message("Server already stopped.")
+        return
+        
+    bash(f"sudo systemctl stop {mcServerService}")
+    await interaction.response.send_message("Server stopped.")
+    
+@bot.tree.command(name="restart-server", description="Restart the minecraft server", guild=guildID)
+async def restartServer(interaction: discord.Interaction):
+    bash(f"sudo systemctl restart {mcServerService}")
+    await interaction.response.send_message("Restarting server...")
+    
+@bot.tree.command(name="delete-world", description="Delete the world folder", guild=guildID)
+async def deleteWorld(interaction: discord.Interaction):
+    if (serverIsOnline()):
+        await interaction.response.send_message("Can not delete world while server is active.")
+        return
+        
+    bash(f"sudo rm -R {mcServerWorldFolder}")
+    await interaction.response.send_message("World deleted.")
+    
+@bot.tree.command(name="cmd", description="Execute a command in the mc server", guild=guildID)
+async def cmd(interaction: discord.Interaction, cmd: str):
+    if (not serverIsOnline()):
+        await interaction.response.send_message("Can not send command, server not active.")
+        return
+        
+    resp = rcon(cmd)
+    await interaction.response.send_message(resp)
+    
+@bot.tree.command(name="server-stat", description="Check if the server is online", guild=guildID)
+async def cmd(interaction: discord.Interaction):
+    resp = ""
+    stat = getServerInfo()
+    if (not stat): resp = "Server is offline 🔴"
+    else:
+        motd = "MOTD: ".join(str(part) for part in stat.motd.parsed)
+        motd = motd.replace("MOTD: Formatting.RESET", "")
+        resp = textwrap.dedent(f"""
+        Server is online 🟢
+        Latency: {round(stat.latency)}ms
+        Players online: {stat.players.online}/{stat.players.max}
+        MOTD: {motd}
+        """)
+    
+        
+    await interaction.response.send_message(resp)
 
-@bot.command()
-async def refreshtunnel(ctx):
-    bash("sudo systemctl restart mc-tunnel")
-    await ctx.send(f"Refreshing tunnel...")
-
-@bot.command()
-async def startserver(ctx):
-    bash("sudo systemctl start better-mc-daemon")
-    await ctx.send(f"Starting server...")
-
-@bot.command()
-async def stopserver(ctx):
-    bash("sudo systemctl stop better-mc-daemon")
-    await ctx.send(f"Stopping server...")
-
-@bot.command()
-async def restartserver(ctx):
-    bash("sudo systemctl restart better-mc-daemon")
-    await ctx.send(f"Restarting server...")
-
-@bot.command()
-async def deleteworld(ctx):
-    bash("sudo rm -R /schoolmc/servers/bettermc/world")
-    await ctx.send("World deleted")
-
-@bot.command()
-async def c(ctx, *, cmd):
-    with MCRcon(host, password, port) as mcr:
-        resp = mcr.command(cmd)
-        await ctx.send(resp) 
-
-bot.run("DISCORD_BOT_TOKEN")
+bot.run(discordBotToken)
