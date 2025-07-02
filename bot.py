@@ -46,9 +46,14 @@ async def restartserver(ctx):
     await ctx.send(f"Restarting server...")
 
 @bot.command()
+async def deleteworld(ctx):
+    bash("sudo rm -R /schoolmc/servers/bettermc/world")
+    await ctx.send("World deleted")
+
+@bot.command()
 async def c(ctx, *, cmd):
     with MCRcon(host, password, port) as mcr:
         resp = mcr.command(cmd)
         await ctx.send(resp) 
 
-bot.run("BOT_TOKEN")
+bot.run("DISCORD_BOT_TOKEN")
