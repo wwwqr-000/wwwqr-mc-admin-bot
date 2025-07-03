@@ -109,6 +109,7 @@ async def cmd(interaction: discord.Interaction, cmd: str):
         return
         
     resp = rcon(cmd)
+    if (resp == ""): resp = "Bot: empty response, did execute."
     await interaction.response.send_message(resp)
     
 @bot.tree.command(name="server-stat", description="Check if the server is online", guild=guildID)
