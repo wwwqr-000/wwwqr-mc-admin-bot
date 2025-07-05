@@ -1,9 +1,10 @@
 import discord, time, subprocess, textwrap#pip install discord
-from discord import app_commands
+from discord import app_commands, File
 from discord.ext import commands
 from mcrcon import MCRcon#pip install mcrcon
 from mcstatus.server import JavaServer# pip install mcstatus
 from decouple import config #pip install python-decouple
+from io import StringIO
 
 rconHost = config("RCON_HOST")
 mcHostPublicIP = config("MC_HOST_PUBLIC")
@@ -111,6 +112,18 @@ async def cmd(interaction: discord.Interaction, cmd: str):
     resp = rcon(cmd)
     if (resp == ""): resp = "Bot: empty response, did execute."
     await interaction.response.send_message(resp)
+
+@bot.tree.command(name="server-log", description="Get the server log file for the current session", guild=guildID)
+async def serverLog(interaction: discord.Interaction, time_ago: str):
+    txtBuff = bash(f"sudo journalctl -u {mcServerService} --since \"{time_ago}\"")
+
+    if txtBuff == "":
+        await interaction.response.send_message("Bot: empty response, did execute.")
+        return
+
+    file = File(fp=StringIO(txtBuff), filename="mc-server.log")
+    await interaction.response.send_message("Mc-server log file:", ephemeral=True)
+    await interaction.followup.send(file=file)
     
 @bot.tree.command(name="server-stat", description="Check if the server is online", guild=guildID)
 async def cmd(interaction: discord.Interaction):
